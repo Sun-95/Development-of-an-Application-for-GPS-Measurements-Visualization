@@ -5,4 +5,4 @@ This video demonstrates the operation of the **"GPS"**  application. Using the A
 - **Satellite speed**
 - **Object speed**
 
-  [![GPS Application](https://youtu.be/pHRRXUZhh78)](https://youtu.be/wW3t3169tTM)
+  [![GPS Application](https://youtu.be/pHRRXUZhh78)](https://youtu.be/TH66RHUvivo)
