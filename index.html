@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualization GPS</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+
+        #gpsPlot {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            margin-bottom: 20px;
+        }
+
+        .form-container {
+            background: #ffffff;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            width: 300px;
+            text-align: center;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 10px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        input {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0 15px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-size: 14px;
+        }
+
+        button {
+            background-color: #dec5b0;
+            border: none;
+            color: black;
+            padding: 12px 20px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.3s, transform 0.3s;
+            margin-top: 10px;
+            font-weight: bold;
+            font-weight: bold;
+            font-weight: bold;
+        }
+
+        button:hover {
+            background-color: #954b00;
+            transform: translateY(-2px);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+    </style>
+</head>
+<body>
+<div id="gpsPlot" style="width:1700px; height:10000px;"></div>
+
+<div class="form-container">
+    <label>
+        Message rate:
+        <input type="number" id="frequency" value="0">
+    </label>
+    <label>
+        Satellite speed:
+        <input type="number" id="satelliteSpeed" value="0">
+    </label>
+    <label>
+        Object speed:
+        <input type="number" id="objectSpeed" value="0">
+    </label>
+    <button onclick="applySettings()">Apply settings</button>
+</div>
+
+<script>
+    let satellites = {};
+    let objectPosition = { x: 50, y: 50, angle: Math.random() * Math.PI * 2, lastUpdateTime: Date.now() };
+    let messageFrequency = parseInt(document.getElementById('frequency').value);
+    let objectSpeed = parseFloat(document.getElementById('objectSpeed').value);
+    let satelliteSpeed = parseFloat(document.getElementById('satelliteSpeed').value);
+    let intervalId;
+
+    const socket = new WebSocket('ws://localhost:4001');
+
+    socket.onopen = function() {
+        console.log("WebSocket Connected");
+    };
+
+    socket.onclose = function() {
+        console.log("WebSocket Disconnected");
+    };
+
+    socket.onerror = function(error) {
+        console.error("WebSocket error:", error);
+    };
+
+    socket.onmessage = (event) => {
+        console.log('Received data:', event.data);
+        const message = JSON.parse(event.data);
+
+        const currentTime = Date.now();
+        if (message.id && message.sentAt && message.receivedAt) {
+            satellites[message.id] = {
+                x: message.x,
+                y: message.y,
+                lastReceivedAt: currentTime,
+                sentAt: message.sentAt,
+                receivedAt: message.receivedAt
+            };
+
+            for (const id in satellites) {
+                if (currentTime - satellites[id].lastReceivedAt > 2000) {
+                    delete satellites[id];
+                } else {
+                    satellites[id].x += satelliteSpeed * 0.1;
+                    satellites[id].y += satelliteSpeed * 0.1;
+                }
+            }
+
+            if (Object.keys(satellites).length >= 3) {
+                const sats = Object.values(satellites);
+                const [sat1, sat2, sat3] = sats;
+
+                const distance1 = (sat1.receivedAt - sat1.sentAt) / 1000 * 300000;
+                const distance2 = (sat2.receivedAt - sat2.sentAt) / 1000 * 300000;
+                const distance3 = (sat3.receivedAt - sat3.sentAt) / 1000 * 300000;
+
+                const result = trilateration(
+                    sat1.x, sat1.y, distance1,
+                    sat2.x, sat2.y, distance2,
+                    sat3.x, sat3.y, distance3
+                );
+
+                if (result) {
+                    objectPosition.x = result.x + objectSpeed * 0.1;
+                    objectPosition.y = result.y + objectSpeed * 0.1;
+                }
+            }
+
+            updatePlot();
+        }
+    };
+
+    function trilateration(x1, y1, d1, x2, y2, d2, x3, y3, d3) {
+        try {
+            const A = 2 * x2 - 2 * x1;
+            const B = 2 * y2 - 2 * y1;
+            const C = d1 ** 2 - d2 ** 2 - x1 ** 2 + x2 ** 2 - y1 ** 2 + y2 ** 2;
+            const D = 2 * x3 - 2 * x2;
+            const E = 2 * y3 - 2 * y2;
+            const F = d2 ** 2 - d3 ** 2 - x2 ** 2 + x3 ** 2 - y2 ** 2 + y3 ** 2;
+
+            const x = (C * E - F * B) / (E * A - B * D);
+            const y = (C * D - A * F) / (B * D - A * E);
+
+            if (isNaN(x) || isNaN(y)) {
+                throw new Error("Trilateration calculation resulted in NaN");
+            }
+
+            return { x, y };
+        } catch (error) {
+            console.error("Trilateration calculation error:", error);
+            return null;
+        }
+    }
+
+    let layout = {
+        title: 'Satellite and object positions',
+        xaxis: { title: 'X (km)', range: [0, 200], zeroline: true, gridcolor: '#ddd' },
+        yaxis: { title: 'Y (km)', range: [0, 200], zeroline: true, gridcolor: '#ddd' },
+        paper_bgcolor: '#f8f8f8',
+        showlegend: true
+    };
+
+    function updatePlot() {
+        const satelliteData = Object.values(satellites).map((sat, index) => ({
+            x: [sat.x],
+            y: [sat.y],
+            mode: 'markers',
+            type: 'scatter',
+            name: `Satellite ${index + 1}`,
+            marker: { size: 10, color: '#4287f5' }
+        }));
+
+        const objectData = {
+            x: [objectPosition.x],
+            y: [objectPosition.y],
+            mode: 'markers',
+            type: 'scatter',
+            name: 'Object',
+            marker: { size: 10, color: '#f54242' }
+        };
+
+        const data = [...satelliteData, objectData];
+        Plotly.react('gpsPlot', data, layout);
+    }
+
+    function applySettings() {
+        messageFrequency = parseInt(document.getElementById('frequency').value);
+        objectSpeed = parseFloat(document.getElementById('objectSpeed').value);
+        satelliteSpeed = parseFloat(document.getElementById('satelliteSpeed').value);
+
+        axios.put('http://localhost:4001', {
+            newMessageFrequency: messageFrequency,
+            newObjectSpeed: objectSpeed,
+            newSatelliteSpeed: satelliteSpeed
+        })
+            .then(response => {
+                console.log('Configuration updated:', response.data);
+
+                if (intervalId) {
+                    clearInterval(intervalId);
+                }
+
+                intervalId = setInterval(() => {
+                    updatePlot();
+                }, messageFrequency);
+            })
+            .catch(error => {
+                console.error('Error updating configuration:', error);
+            });
+    }
+</script>
+</body>
+</html>
